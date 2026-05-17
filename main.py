@@ -1,10 +1,25 @@
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 import requests, os, json, re
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# CORS يدوي بدون flask-cors
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
+
+@app.before_request
+def handle_options():
+    if request.method == 'OPTIONS':
+        response = app.make_default_options_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        return response
 
 SAHMK_KEY  = os.environ.get("SAHMK_API_KEY", "")
 SAHMK_BASE = "https://app.sahmk.sa/api/v1"
@@ -106,23 +121,10 @@ def us_quotes():
             results[sym] = {"error": str(e)}
     return jsonify(results)
 
-@app.route("/us_news/<symbol>")
-def us_news(symbol):
-    if not FINNHUB_KEY:
-        return jsonify({"error": "FINNHUB_API_KEY مفقود"}), 500
-    try:
-        today    = datetime.now().strftime("%Y-%m-%d")
-        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        res = requests.get(f"{FINNHUB_URL}/company-news",
-            params={"symbol": symbol, "from": week_ago, "to": today, "token": FINNHUB_KEY},
-            timeout=10)
-        news = res.json()[:5]
-        return jsonify({"news": news})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/news", methods=["POST"])
+@app.route("/news", methods=["POST", "OPTIONS"])
 def get_news():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
     if not CLAUDE_KEY:
         return jsonify({"error": "ANTHROPIC_API_KEY مفقود"}), 500
     try:
@@ -130,7 +132,7 @@ def get_news():
         stocks = data.get("stocks", [])
         market = data.get("market", "SA")
         syms   = "، ".join([f"{s['code']} {s['name']}" for s in stocks])
-        ctx    = "سوق تداول السعودي" if market == "SA" else "السوق الأمريكي"
+        ctx    = "سوق تداول السعودي" if market == "SA" else "السوق الأمريكي NYSE/NASDAQ"
         prompt = f'محلل مالي في {ctx}. للأسهم: {syms}\nلكل سهم خبرين واقعيين.\nأجب بـ JSON فقط:\n{{"stocks":{{"رمز":{{"news":[{{"headline":"نص","sentiment":"positive|negative|neutral","source":"مصدر","time":"منذ X ساعة"}}],"overall_sentiment":"positive|negative|neutral"}}}}}}'
         text = claude_call(prompt)
         text = re.sub(r'```json|```', '', text).strip()
@@ -141,8 +143,10 @@ def get_news():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/analyze", methods=["POST"])
+@app.route("/analyze", methods=["POST", "OPTIONS"])
 def analyze_stock():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
     if not CLAUDE_KEY:
         return jsonify({"error": "ANTHROPIC_API_KEY مفقود"}), 500
     try:
@@ -178,7 +182,7 @@ def health():
         "sahmk":   "✅" if SAHMK_KEY  else "❌ مفقود",
         "finnhub": "✅" if FINNHUB_KEY else "❌ مفقود",
         "claude":  "✅" if CLAUDE_KEY  else "❌ مفقود",
-        "version": "3.0"
+        "version": "4.0"
     })
 
 if __name__ == "__main__":
